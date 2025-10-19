@@ -74,6 +74,7 @@ abstract class PdfClient
             ->text();
 
         $text = str_replace("\f", "", $text);
+        $text = str_replace("\r", "", $text);
 
         return explode("\n", $text);
     }

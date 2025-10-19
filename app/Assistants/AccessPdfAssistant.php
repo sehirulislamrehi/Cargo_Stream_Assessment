@@ -15,7 +15,6 @@ class AccessPdfAssistant extends PdfClient
     ];
 
     public static function validateFormat (array $lines) {
-        // dd($lines[0],"Access Logistic GmbH, Amerling 130, A-6233 Kramsach");
         return $lines[0] == "Access Logistic GmbH, Amerling 130, A-6233 Kramsach"
             && $lines[2] == "To:"
             && Str::startsWith($lines[4], "Contactperson: ");
