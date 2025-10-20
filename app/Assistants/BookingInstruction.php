@@ -7,16 +7,16 @@ use Carbon\Carbon;
 use Exception;
 use Illuminate\Support\Str;
 
-class CharteringConfirmationPdfAssistant extends PdfClient
+class BookingInstruction extends PdfClient
 {
     public static function validateFormat(array $lines)
     {
-        foreach ($lines as $line) {
-            if ($line == "CHARTERING CONFIRMATION") {
-                return true;
-            }
-        }
-        return false;
+        $lines = array_values(array_filter($lines, function ($line) {
+            return trim($line) !== '';
+        }));
+
+        return $lines[4] == "BOOKING"
+        && $lines[5] == "INSTRUCTION";
     }
 
 
@@ -26,9 +26,9 @@ class CharteringConfirmationPdfAssistant extends PdfClient
             throw new \Exception("Invalid PDF format");
         }
 
-        $lines = array_filter($lines, function ($line) {
+        $lines = array_values(array_filter($lines, function ($line) {
             return trim($line) !== '';
-        });
+        }));
 
         $vatNumber = '';
         foreach ($lines as $line) {
@@ -43,86 +43,83 @@ class CharteringConfirmationPdfAssistant extends PdfClient
         }
 
         $customer = [
-            'side' => 'sender', // usually "sender" or "receiver" on invoices
+            'side' => 'sender', // usually "sender" or "receiver"
             'details' => [
-                'company' => 'TRANSALLIANCE TS LTD',
-                'street_address' => 'SUITE 8/9 FARADAY COURT',
-                'city' => 'Kramsach',
-                'postal_code' => '6233',
-                'country' => GeonamesCountry::getIso('AT'),
-                'vat_code' => 'ATU74076812',
-                'contact_person' => 'John Doe', // replace with actual if available
-                'phone' => '+43 5337 12345',     // optional, based on invoice
-                'email' => 'info@transalliance.at', // optional
+                'company' => 'ZIEGLER UK LTD',
+                'street_address' => 'LONDON GATEWAY LOGISTICS PARK',
+                'city' => 'NORTH 4, NORTH SEA CROSSING',
+                'postal_code' => 'SS17 9FJ',
+                'country' => GeonamesCountry::getIso('GB'),
+                'vat_code' => '',        // not available
+                'contact_person' => '',  // not available
+                'phone' => '+ 44 (0) 1375 802900',
+                'email' => '',           // not available
             ],
         ];
 
         /************************* BUILD loading location *************************/
-        $loading_index = array_search('Loading', $lines);
+        $loading_locations = [];
 
-        $loading_location_date_time = null;
-        if ($loading_index !== false) {
-            for ($i = $loading_index + 1; $i < count($lines); $i++) {
-                if (isset($lines[$i]) && preg_match('/^\d{2}\/\d{2}\/\d{2}$/', $lines[$i])) {
-                    $loading_location_date_time = Carbon::createFromFormat('y/m/d', $lines[$i]);
-                    break;
-                }
-            }
+$collectionIndexes = array_keys($lines, 'Collection');
+
+foreach ($collectionIndexes as $index) {
+    $companyName = $lines[$index + 1] ?? '';
+
+    $addressLines = [];
+    $dateLine = '';
+    $timeLine = '';
+
+    // Start from 2 lines after 'Collection' (company name)
+    for ($i = $index + 2; $i < count($lines); $i++) {
+        $line = $lines[$i];
+
+        // Stop at next "Collection" to avoid overlapping
+        if ($line === 'Collection') {
+            break;
         }
 
-        $companyName = '';
-        foreach ($lines as $index => $line) {
-            if ($index <= $loading_index) continue;
-            if (preg_match('/^[A-Z\s]+$/i', $line)) {
-                $companyName = $line;
-                break;
-            }
+        // If line matches a date, stop collecting address
+        if (preg_match('/\d{2}\/\d{2}\/\d{4}/', $line)) {
+            $dateLine = $line;
+            $timeLine = $lines[$i - 1] ?? '';
+            break;
         }
 
-        $addressLine = '';
-        foreach ($lines as $index => $line) {
-            if ($index <= $loading_index) continue;
-            if (strpos($line, 'GB') === 0) {
-                $addressLine = $line;
-                break;
-            }
+        $addressLines[] = $line;
+    }
+
+    // Combine address lines into street_address
+    $streetAddress = implode(', ', $addressLines);
+
+    // Try to parse postal code and city from last address line if possible
+    $postal_code = '';
+    $city = '';
+    if (!empty($addressLines)) {
+        $lastLine = end($addressLines);
+        if (preg_match('/([A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2})$/i', $lastLine, $matches)) {
+            $postal_code = $matches[1];
+            $city = trim(str_replace($matches[1], '', $lastLine));
         }
+    }
 
-        $postalCode = '';
-        if (preg_match('/^(GB-[A-Z0-9]+)/', $addressLine, $matches)) {
-            $postalCode = $matches[1];
-        }
-
-        $parts = explode(' ', $addressLine);
-        $city = end($parts);
-
-        $telLine = '';
-        foreach ($lines as $index => $line) {
-            if ($index <= $loading_index) continue;
-            if (stripos($line, 'Tel') !== false) {
-                $telLine = $line;
-                break;
-            }
-        }
-
-
-        $loading_locations = [
-            [
-                'company_address' => [
-                    'company' => $companyName,
-                    'street_address' => $addressLine,
-                    'postal_code' => $postalCode ?: 'N/A',
-                    'city' => $city,
-                    'country' => 'GB',
-                    'contact_person' => $telLine,
-                    'email' => '',
-                    'vat_code' => $vatNumber,
-                ],
-                'time' => [
-                    'datetime_from' => Carbon::parse($loading_location_date_time)->toIsoString(),
-                ],
-            ]
-        ];
+    $loading_locations[] = [
+        'company_address' => [
+            'company' => $companyName,
+            'street_address' => $streetAddress,
+            'postal_code' => $postal_code ?: '',
+            'city' => $city ?: '',
+            'country' => 'GB',
+            'contact_person' => '', // Not provided in lines
+            'email' => '',
+            'vat_code' => '',
+        ],
+        'time' => [
+            'datetime_from' => $dateLine ? Carbon::createFromFormat('d/m/Y', $dateLine)->toIsoString() : '',
+            'time_from_to' => $timeLine,
+        ],
+    ];
+}
+dd($loading_locations);
         /************************* BUILD loading location *************************/
 
 
